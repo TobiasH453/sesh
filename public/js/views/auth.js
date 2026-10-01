@@ -33,6 +33,14 @@ export function AuthView({ onDone }) {
         const body = { handle: handle.value.trim(), password: password.value };
         if (mode === 'join') body.code = code.value;
         const { user } = await api.post(mode === 'join' ? '/api/signup' : '/api/login', body);
+        // Make sure the browser actually kept the session cookie; if it
+        // didn't, every next request would bounce straight back here.
+        const me = await api.get('/api/me');
+        if (!me.user) {
+          throw new Error(location.protocol === 'http:'
+            ? `Signed in, but your browser won't keep the login on http. Open https://${location.host} instead.`
+            : 'Signed in, but your browser didn\'t keep the login. Check that cookies are allowed for this site.');
+        }
         onDone(user);
       } catch (err) {
         error.textContent = err.message;

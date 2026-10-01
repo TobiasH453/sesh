@@ -21,7 +21,14 @@ export function parseCookies(header = '') {
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
     if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    const key = part.slice(0, i).trim();
+    const value = part.slice(i + 1).trim();
+    try {
+      out[key] = decodeURIComponent(value);
+    } catch {
+      // Someone else's malformed cookie on the same domain; keep it raw.
+      out[key] = value;
+    }
   }
   return out;
 }

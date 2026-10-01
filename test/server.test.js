@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -159,6 +160,39 @@ test('sweep removes stale files nothing references', async () => {
   assert.equal(fs.existsSync(fresh), true, 'recent files may be in-flight uploads');
   assert.equal(fs.existsSync(kept), true, 'referenced clips stay');
   await call('DELETE', `/api/videos/${r.data.video.id}`, { cookie: alice });
+});
+
+test('behind https, plain-http visitors are redirected so the login cookie sticks', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sesh-https-'));
+  const secure = createApp({ dataDir: dir, inviteCode: 'x', transcode: false, secureCookies: true });
+  await new Promise((r) => secure.server.listen(0, '127.0.0.1', r));
+  // fetch() won't set Host, so use the raw client like a proxy would.
+  const get = (headers) =>
+    new Promise((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port: secure.server.address().port, path: '/u/bo?x=1', headers: { host: 'sesh.example.org', ...headers } }, (res) => {
+        res.resume();
+        resolve({ status: res.statusCode, location: res.headers.location });
+      });
+      req.on('error', reject);
+    });
+  try {
+    let r = await get({ 'x-forwarded-proto': 'http' });
+    assert.equal(r.status, 308);
+    assert.equal(r.location, 'https://sesh.example.org/u/bo?x=1');
+    r = await get({ 'cf-visitor': '{"scheme":"http"}' });
+    assert.equal(r.status, 308);
+    assert.equal((await get({ 'x-forwarded-proto': 'https' })).status, 200);
+    assert.equal((await get({})).status, 200, 'direct local access is left alone');
+  } finally {
+    secure.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a malformed cookie from another app on the domain does not break auth', async () => {
+  const r = await call('GET', '/api/me', { cookie: `junk=%E0%A4%A; ${alice}` });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.user.handle, 'alice');
 });
 
 test('client routes fall back to the app shell, missing assets 404', async () => {

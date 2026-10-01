@@ -23,6 +23,13 @@ const STATIC_TYPES = {
 
 const MEDIA_RE = /^\/media\/([\w-]+\.(?:mp4|webm|mov|jpg))$/;
 
+// The scheme the visitor actually used, when a proxy like Cloudflare sits in front.
+function forwardedProto(req) {
+  const xfp = req.headers['x-forwarded-proto'];
+  if (xfp) return xfp.split(',')[0].trim();
+  return /"scheme":"(\w+)"/.exec(req.headers['cf-visitor'] || '')?.[1];
+}
+
 export function createApp(overrides = {}) {
   const config = { ...defaults, ...overrides };
   const uploads = path.join(config.dataDir, 'uploads');
@@ -63,6 +70,11 @@ export function createApp(overrides = {}) {
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
+    // Browsers drop Secure cookies on plain http, so login would silently
+    // loop. Send http visitors to the https version instead.
+    if (config.secureCookies && forwardedProto(req) === 'http' && req.headers.host) {
+      return res.writeHead(308, { Location: `https://${req.headers.host}${req.url}` }).end();
+    }
     try {
       if (url.pathname.startsWith('/api/')) {
         if (!(await api.handle(req, res, url))) json(res, 404, { error: 'not found' });
